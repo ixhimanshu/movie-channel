@@ -17,6 +17,7 @@ Compose service inside the **morpedia** project.
 | TV guide (EPG) | `https://tv.augaan.com/iptv/xmltv.xml` |
 | ErsatzTV admin (password) | <https://tv-admin.augaan.com>, login in `deploy/admin-credentials.txt` |
 | Add a movie by link (password) | <https://tv-admin.augaan.com/submit/> |
+| View/delete server movies (password) | <https://tv-admin.augaan.com/submit/movies/> |
 
 Works from anywhere, not only home Wi-Fi.
 
@@ -39,6 +40,10 @@ How it's built ([deploy/](deploy/)):
   to 720p into `/media/incoming`, then move to `/media/Movies/<Title>/`. The submission list
   is kept in `/media/.submit/jobs.json`. yt-dlp is reinstalled on every start, so if
   YouTube downloads start failing, restart the service.
+  **Manage Movies** (`/submit/movies/`) lists completed video files on the server,
+  with search and file sizes. Delete asks for confirmation, permanently removes the
+  selected movie folder (or video file), and requests a library scan. The guide may
+  retain old entries until the channel schedule refreshes.
 - Domains (Easypanel → movie-channel → Domains): `tv.augaan.com` → `player:80`,
   `tv-admin.augaan.com` → `player:8080`. DNS is Cloudflare (proxied CNAMEs to
   `server.augaan.com`). The server only accepts web traffic via Cloudflare, so the

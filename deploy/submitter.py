@@ -261,6 +261,57 @@ def rescan():
 
 # ---- web ----
 
+def movie_files(path):
+    if os.path.isfile(path):
+        return [path] if path.lower().endswith(VIDEO_EXTS) else []
+    files = []
+    for root, _, names in os.walk(path, followlinks=False):
+        for name in names:
+            file = os.path.join(root, name)
+            if name.lower().endswith(VIDEO_EXTS) and not os.path.islink(file):
+                files.append(file)
+    return files
+
+
+def list_movies():
+    movies = []
+    if not os.path.isdir(MOVIES):
+        return movies
+    for name in sorted(os.listdir(MOVIES), key=str.casefold):
+        path = os.path.join(MOVIES, name)
+        if os.path.islink(path):
+            continue
+        try:
+            files = movie_files(path)
+            if files:
+                movies.append({"id": name, "title": name if os.path.isdir(path) else os.path.splitext(name)[0],
+                               "size": sum(os.path.getsize(f) for f in files), "files": len(files)})
+        except FileNotFoundError:  # a download or deletion changed the directory
+            continue
+    return movies
+
+
+def delete_movie(name):
+    # Accept only one existing entry in Movies; never a path supplied by the client.
+    if not isinstance(name, str) or not name or name in (".", "..") or any(c in name for c in ("/", "\\", "\x00")):
+        raise ValueError("invalid movie")
+    path = os.path.join(MOVIES, name)
+    if os.path.islink(path):
+        raise ValueError("cannot delete a linked folder or file")
+    if not os.path.exists(path) or not movie_files(path):
+        raise FileNotFoundError("movie not found")
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+    with lock:
+        for job in jobs.values():
+            if job.get("status") == "done" and job.get("title") == name:
+                job.update(status="deleted", reason="deleted from the server", progress=None)
+        save()
+    threading.Thread(target=rescan, daemon=True).start()
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/submit":  # the page's api/ links are relative to /submit/
@@ -270,6 +321,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.end_headers()
         if self.path == "/submit/":
             return self.reply(200, PAGE.encode(), "text/html; charset=utf-8")
+        if self.path in ("/submit/movies", "/submit/movies/"):
+            return self.reply(200, MOVIES_PAGE.encode(), "text/html; charset=utf-8")
+        if self.path == "/submit/api/movies":
+            return self.reply(200, json.dumps(list_movies()).encode(), "application/json")
         if self.path == "/submit/api/jobs":
             with lock:
                 listed = sorted(jobs.values(), key=lambda j: j["created"], reverse=True)[:100]
@@ -278,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(404, b"not found", "text/plain")
 
     def do_POST(self):
-        if self.path != "/submit/api/jobs":
+        if self.path not in ("/submit/api/jobs", "/submit/api/movies/delete"):
             return self.reply(404, b"not found", "text/plain")
         # JSON only: a plain cross-site form can't send it, so a remembered admin login can't be abused
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -287,6 +342,21 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         except ValueError:
             return self.error(400, "invalid JSON")
+        if not isinstance(body, dict):
+            return self.error(400, "send a JSON object")
+        if self.path == "/submit/api/movies/delete":
+            if body.get("confirm") is not True:
+                return self.error(400, "confirm deletion first")
+            try:
+                delete_movie(body.get("id"))
+            except ValueError as e:
+                return self.error(400, str(e))
+            except FileNotFoundError:
+                return self.error(404, "movie not found")
+            except OSError:
+                traceback.print_exc()
+                return self.error(500, "could not delete the movie; refresh the list and try again")
+            return self.reply(200, json.dumps({"message": "Movie deleted from the server. Library scan requested; the guide updates when the schedule refreshes."}).encode(), "application/json")
         url = str(body.get("url") or "").strip()
         title = clean_title(str(body.get("title") or ""))
         if not re.match(r"https?://\S+$", url):
@@ -359,6 +429,7 @@ PAGE = r"""<!doctype html>
 </head>
 <body>
 <main>
+  <p><a href="/submit/movies/" style="color: var(--accent)">Manage Movies — view and delete server movies</a></p>
   <h1>Add a movie to the channel</h1>
   <p class="lead">Paste a link to a single video to download it directly.
     New movies join the channel after the next library scan.</p>
@@ -376,7 +447,7 @@ PAGE = r"""<!doctype html>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const LABELS = { queued: "queued", checking: "checking", downloading: "downloading", done: "added", rejected: "rejected", failed: "failed" };
+const LABELS = { queued: "queued", checking: "checking", downloading: "downloading", done: "added", deleted: "deleted", rejected: "rejected", failed: "failed" };
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
@@ -423,6 +494,99 @@ setInterval(() => { if (!document.hidden) refresh(); }, 3000);
 </script>
 </body>
 </html>
+"""
+
+MOVIES_PAGE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage Movies</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0d1a; color: #f4f4f6;
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 900px; margin: auto; padding: 32px 16px 48px; }
+  a { color: #f5b041; }
+  h1 { font-size: 24px; margin-bottom: 6px; }
+  .lead, .details { color: #a9adbf; }
+  .tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 24px 0; }
+  input { flex: 1; min-width: 180px; padding: 10px 12px; border: 1px solid #262a40;
+    background: #151829; color: inherit; border-radius: 8px; font: inherit; }
+  button { padding: 10px 16px; border: 1px solid #262a40; background: #151829;
+    color: inherit; border-radius: 8px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .delete { color: #ff6b6b; border-color: #75404a; }
+  .movie { padding: 16px 0; border-bottom: 1px solid #262a40; display: flex;
+    gap: 16px; align-items: center; justify-content: space-between; }
+  .title { font-weight: 600; overflow-wrap: anywhere; }
+  .info { min-width: 0; }
+  .details { font-size: 13px; margin-top: 4px; }
+  #message { overflow-wrap: anywhere; }
+</style>
+</head>
+<body><main>
+<a href="/submit/">← Add a movie</a>
+<h1>Manage Movies</h1>
+<p class="lead">Movies stored on the server. Downloads appear here when complete.
+Deleting a movie removes its folder and files permanently.</p>
+<div class="tools"><input id="search" type="search" placeholder="Search movies" aria-label="Search movies">
+<button id="refresh" type="button">Refresh</button><span id="count"></span></div>
+<p id="message" role="status" aria-live="polite"></p>
+<div id="movies">Loading movies...</div>
+</main><script>
+const $ = id => document.getElementById(id);
+let movies = [], deleting = false;
+function size(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  return bytes.toFixed(i ? 1 : 0) + ' ' + units[i];
+}
+function render() {
+  const list = $('movies'); list.replaceChildren();
+  $('count').textContent = movies.length + (movies.length === 1 ? ' movie' : ' movies');
+  const visible = movies.filter(m => m.title.toLocaleLowerCase().includes($('search').value.toLocaleLowerCase()));
+  if (!visible.length) { list.textContent = movies.length ? 'No matching movies.' : 'No completed movies on the server yet.'; return; }
+  for (const movie of visible) {
+    const row = document.createElement('div'); row.className = 'movie';
+    const info = document.createElement('div'); info.className = 'info';
+    const title = document.createElement('div'); title.className = 'title'; title.textContent = movie.title;
+    const details = document.createElement('div'); details.className = 'details';
+    details.textContent = size(movie.size) + ' · ' + movie.files + (movie.files === 1 ? ' video file' : ' video files');
+    info.append(title, details);
+    const button = document.createElement('button'); button.className = 'delete'; button.textContent = 'Delete';
+    button.type = 'button'; button.disabled = deleting;
+    button.setAttribute('aria-label', 'Delete ' + movie.title);
+    button.addEventListener('click', () => removeMovie(movie));
+    row.append(info, button); list.append(row);
+  }
+}
+async function refresh() {
+  $('refresh').disabled = true;
+  try {
+    const response = await fetch('/submit/api/movies', {cache: 'no-store'});
+    if (!response.ok) throw new Error('Could not load movies (' + response.status + ').');
+    movies = await response.json(); render();
+  } catch (error) { $('message').textContent = error.message; }
+  finally { $('refresh').disabled = false; }
+}
+async function removeMovie(movie) {
+  if (deleting || !confirm('Permanently delete "' + movie.title + '" and its files from the server? This cannot be undone.')) return;
+  deleting = true; render(); $('message').textContent = 'Deleting ' + movie.title + '...';
+  try {
+    const response = await fetch('/submit/api/movies/delete', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: movie.id, confirm: true})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not delete movie.');
+    $('message').textContent = data.message; await refresh();
+  } catch (error) { $('message').textContent = error.message; }
+  finally { deleting = false; render(); }
+}
+$('search').addEventListener('input', render);
+$('refresh').addEventListener('click', refresh);
+refresh();
+</script></body></html>
 """
 
 
