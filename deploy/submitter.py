@@ -315,6 +315,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, json.dumps(list_movies()).encode(), "application/json")
         if self.path == "/submit/api/channel":
             return self.reply(200, json.dumps(channel_sync.snapshot()).encode(), "application/json")
+        if self.path == "/submit/api/playback":
+            return self.reply(200, json.dumps({"revision": channel_sync.snapshot()["playback_revision"]}).encode(), "application/json")
         if self.path == "/submit/api/jobs":
             with lock:
                 listed = sorted(jobs.values(), key=lambda j: j["created"], reverse=True)[:100]

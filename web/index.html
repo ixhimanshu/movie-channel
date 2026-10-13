@@ -104,6 +104,9 @@
   let hls = null;
   let programmes = [];   // [{start, stop, title, year}] in ms since epoch
   let guideLoadedAt = 0;
+  let playbackRevision = null;
+  let channelCheckPending = false;
+  let reconnectTimer = null;
 
   // ---------- guide ----------
   function parseXmltvDate(s) {
@@ -116,7 +119,7 @@
 
   async function loadGuide() {
     try {
-      const text = (await (await fetch(GUIDE, { cache: 'no-store' })).text()).replace(/^﻿/, '');
+      const text = (await (await fetch(GUIDE + '?revision=' + (playbackRevision ?? 0), { cache: 'no-store' })).text()).replace(/^﻿/, '');
       const doc = new DOMParser().parseFromString(text, 'application/xml');
       // find this channel's id by its number (first display-name is "<number> <name>", one is just "<number>")
       let channelId = null;
@@ -190,28 +193,54 @@
   function showStatus(msg) { $('status').textContent = msg; $('status').hidden = !msg; }
 
   function startPlayer() {
+    clearTimeout(reconnectTimer); reconnectTimer = null;
     showStatus('Tuning in…');
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 30 });
-      hls.loadSource(STREAM);
+      const player = hls;
+      hls.loadSource(STREAM + '&revision=' + (playbackRevision ?? 0));
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       hls.on(Hls.Events.ERROR, (_, data) => {
+        if (hls !== player) return;
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { hls.recoverMediaError(); return; }
         // channel restarting or network blip: reconnect
         showStatus('Reconnecting…');
         hls.destroy(); hls = null;
-        setTimeout(startPlayer, 3000);
+        reconnectTimer = setTimeout(startPlayer, 3000);
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = STREAM;   // iPhone / iPad native HLS
+      video.src = STREAM + '&revision=' + (playbackRevision ?? 0);   // iPhone / iPad native HLS
       video.play().catch(() => {});
     } else {
       showStatus('This browser cannot play the stream.');
     }
   }
   video.addEventListener('playing', () => showStatus(''));
+
+  async function checkChannel() {
+    if (channelCheckPending || location.port === '8410') return;
+    channelCheckPending = true;
+    try {
+      const response = await fetch('/channel-status', {cache: 'no-store'});
+      if (!response.ok) return;
+      const {revision} = await response.json();
+      if (!Number.isSafeInteger(revision) || revision < 0) return;
+      if (playbackRevision === null) { playbackRevision = revision; return; }
+      if (revision === playbackRevision) return;
+      playbackRevision = revision;
+      clearTimeout(reconnectTimer); reconnectTimer = null;
+      if (hls) { hls.destroy(); hls = null; }
+      video.pause();
+      video.removeAttribute('src'); video.load();  // discard the old movie's buffer
+      programmes = []; guideLoadedAt = 0;
+      $('mini-title').textContent = 'Updating channel…';
+      await loadGuide();
+      startPlayer();
+    } catch (error) { console.warn('channel status unavailable', error); }
+    finally { channelCheckPending = false; }
+  }
 
   // ---------- controls ----------
   function setMuted(m) {
@@ -249,7 +278,8 @@
   });
 
   setMuted(true);   // browsers only allow autoplay when muted
-  loadGuide().then(startPlayer);
+  checkChannel().then(loadGuide).then(startPlayer);
+  setInterval(checkChannel, 5000);
   setInterval(tick, 500);
   wake();
 </script>

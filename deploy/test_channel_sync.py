@@ -53,6 +53,7 @@ class ChannelSyncTests(unittest.TestCase):
         self.assertEqual(calls, [('POST', '/api/libraries/1/scan'), ('POST', '/api/maintenance/empty_trash'),
                                  ('POST', '/api/channels/1/playout/reset'), ('DELETE', '/api/session/1')])
         self.assertEqual(self.sync.snapshot()['status'], 'done')
+        self.assertEqual(self.sync.snapshot()['playback_revision'], 1)
 
     def test_scan_timeout_never_purges_or_resets_schedule(self):
         with patch.object(self.sync, 'api') as api, patch.object(self.sync, 'wait_for', side_effect=TimeoutError('scan incomplete')):
@@ -94,6 +95,7 @@ class ChannelSyncTests(unittest.TestCase):
         self.sync.request()
         self.sync.update(1, 'done', 'old update')
         self.assertEqual(self.sync.snapshot()['status'], 'queued')
+        self.assertEqual(self.sync.snapshot()['playback_revision'], 1)
         resumed = ChannelSync(self.sync.etv, self.sync.config, '1', '1', self.sync.state_file)
         with patch('channel_sync.threading.Thread'):
             resumed.start()

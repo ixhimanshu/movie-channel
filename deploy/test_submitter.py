@@ -119,9 +119,11 @@ class MovieManagementTests(unittest.TestCase):
         self.assertEqual(post({"id": "Example", "confirm": True}, "text/plain"), 415)
         self.assertEqual(post([]), 400)
         self.assertTrue(folder.exists())
-        for path in ("/submit/", "/submit/movies/", "/submit/api/movies", "/submit/api/channel"):
+        for path in ("/submit/", "/submit/movies/", "/submit/api/movies", "/submit/api/channel", "/submit/api/playback"):
             with urllib.request.urlopen(base + path) as response:
                 self.assertEqual(response.status, 200)
+                if path == "/submit/api/playback":
+                    self.assertEqual(set(json.load(response)), {"revision"})
         self.assertEqual(post({"id": "Example", "confirm": True}), 200)
         self.assertFalse(folder.exists())
         self.assertEqual(post({"id": "Example", "confirm": True}), 404)

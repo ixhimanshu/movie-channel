@@ -47,6 +47,8 @@ How it's built ([deploy/](deploy/)):
   scan the library, wait for scan completion, empty missing-file records, reset the
   channel to a fresh shuffle, and stop the old streaming session so playback reconnects
   to the new schedule. This restarts the current movie; buffered video may remain briefly.
+  The web player checks the completed playback revision every five seconds and discards
+  its old video buffer and guide when the channel changes. Live IPTV responses are not cached.
   Channel progress and failures appear on Manage Movies. **Reshuffle channel** can
   refresh an existing stale schedule or retry a failed update. Pending updates survive
   restarts. The submitter reads the mounted SQLite database to verify scan/build

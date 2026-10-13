@@ -18,7 +18,7 @@ class ChannelSync:
         self.state_file = state_file
         self.lock = threading.Lock()
         self.work = queue.Queue()
-        self.state = {"status": "idle", "reason": "Channel ready", "revision": 0}
+        self.state = {"status": "idle", "reason": "Channel ready", "revision": 0, "playback_revision": 0}
         try:
             with open(state_file) as f:
                 self.state.update(json.load(f))
@@ -50,9 +50,12 @@ class ChannelSync:
 
     def update(self, revision, status, reason):
         with self.lock:
+            # Notify players even when another library change arrived during this build.
+            if status == 'done':
+                self.state['playback_revision'] = revision
             if self.state['revision'] == revision:
                 self.state.update(status=status, reason=reason)
-                self.save()
+            self.save()
 
     def worker(self):
         while True:
