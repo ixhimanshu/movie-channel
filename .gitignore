@@ -1,0 +1,10 @@
+# admin password (plain text); the compose file only carries its hash
+deploy/admin-credentials.txt
+
+# movies and installers
+media/
+downloads/
+
+.playwright-mcp/
+.DS_Store
+__pycache__/

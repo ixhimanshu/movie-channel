@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movie Channel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"%3E%3Cdefs%3E%3ClinearGradient id="bg" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0" stop-color="#1b1f3b"/%3E%3Cstop offset="1" stop-color="#0b0d1a"/%3E%3C/linearGradient%3E%3ClinearGradient id="gold" x1="0" y1="0" x2="0" y2="1"%3E%3Cstop offset="0" stop-color="#ffd27a"/%3E%3Cstop offset="1" stop-color="#f29b2b"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x="16" y="16" width="480" height="480" rx="96" fill="url%28#bg%29"/%3E%3Crect x="96" y="132" width="320" height="220" rx="36" fill="none" stroke="url%28#gold%29" stroke-width="22"/%3E%3Cline x1="256" y1="132" x2="196" y2="72" stroke="url%28#gold%29" stroke-width="16" stroke-linecap="round"/%3E%3Cline x1="256" y1="132" x2="316" y2="72" stroke="url%28#gold%29" stroke-width="16" stroke-linecap="round"/%3E%3Cpath d="M226 190 L226 294 L312 242 Z" fill="url%28#gold%29"/%3E%3Crect x="176" y="372" width="160" height="18" rx="9" fill="url%28#gold%29"/%3E%3Ccircle cx="256" cy="430" r="14" fill="#ff3b3b"/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #000;
+    --panel: rgba(10, 12, 24, 0.78);
+    --text: #f4f4f6;
+    --muted: #a9adbf;
+    --accent: #f5b041;
+    --live: #ff3b3b;
+    --track: rgba(255, 255, 255, 0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+
+  /* always-visible counter (top-left) */
+  .counter { position: fixed; top: max(14px, env(safe-area-inset-top)); left: 16px; display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px; border-radius: 10px; background: var(--panel); backdrop-filter: blur(8px);
+    font-variant-numeric: tabular-nums; max-width: calc(100% - 140px); }
+  .counter img { width: 22px; height: 22px; border-radius: 5px; }
+  .counter .t { font-weight: 600; white-space: nowrap; }
+  .counter .n { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .clock { position: fixed; top: max(14px, env(safe-area-inset-top)); right: 16px; padding: 7px 12px; border-radius: 10px;
+    background: var(--panel); backdrop-filter: blur(8px); font-variant-numeric: tabular-nums; display: flex; gap: 8px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 8px var(--live); }
+
+  /* info bar (bottom) — shows on mouse move / tap */
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 48px 16px max(18px, env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,0.88) 45%); transition: opacity .35s; }
+  .bar.hidden { opacity: 0; pointer-events: none; }
+  .bar-inner { max-width: 1100px; margin: 0 auto; }
+  .row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .title { font-size: clamp(20px, 3vw, 30px); font-weight: 700; }
+  .title .year { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .times { font-variant-numeric: tabular-nums; font-size: clamp(15px, 1.8vw, 18px); }
+  .times .left { color: var(--muted); margin-left: 10px; }
+  .track { height: 6px; border-radius: 3px; background: var(--track); margin: 12px 0 10px; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .5s linear; }
+  .meta { color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .buttons { display: flex; gap: 8px; }
+  button { font: inherit; color: var(--text); background: rgba(255,255,255,0.12); border: 0; border-radius: 8px;
+    padding: 7px 12px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.22); }
+
+  .unmute { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; padding: 14px 22px;
+    background: var(--panel); backdrop-filter: blur(8px); }
+  .status { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--muted); }
+  [hidden] { display: none !important; }
+  body.idle { cursor: none; }
+</style>
+</head>
+<body>
+<video id="video" playsinline autoplay muted></video>
+
+<div class="counter" id="counter">
+  <img src="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"%3E%3Cdefs%3E%3ClinearGradient id="bg" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0" stop-color="#1b1f3b"/%3E%3Cstop offset="1" stop-color="#0b0d1a"/%3E%3C/linearGradient%3E%3ClinearGradient id="gold" x1="0" y1="0" x2="0" y2="1"%3E%3Cstop offset="0" stop-color="#ffd27a"/%3E%3Cstop offset="1" stop-color="#f29b2b"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x="16" y="16" width="480" height="480" rx="96" fill="url%28#bg%29"/%3E%3Crect x="96" y="132" width="320" height="220" rx="36" fill="none" stroke="url%28#gold%29" stroke-width="22"/%3E%3Cline x1="256" y1="132" x2="196" y2="72" stroke="url%28#gold%29" stroke-width="16" stroke-linecap="round"/%3E%3Cline x1="256" y1="132" x2="316" y2="72" stroke="url%28#gold%29" stroke-width="16" stroke-linecap="round"/%3E%3Cpath d="M226 190 L226 294 L312 242 Z" fill="url%28#gold%29"/%3E%3Crect x="176" y="372" width="160" height="18" rx="9" fill="url%28#gold%29"/%3E%3Ccircle cx="256" cy="430" r="14" fill="#ff3b3b"/%3E%3C/svg%3E" alt="">
+  <span class="t" id="mini-time">--:--</span>
+  <span class="n" id="mini-title">Tuning in…</span>
+</div>
+<div class="clock"><span class="dot"></span><span>LIVE</span><span id="clock"></span></div>
+
+<button class="unmute" id="unmute">🔇 Tap for sound</button>
+<div class="status" id="status" hidden></div>
+
+<div class="bar" id="bar">
+  <div class="bar-inner">
+    <div class="row">
+      <div class="title"><span id="title">Movie Channel</span><span class="year" id="year"></span></div>
+      <div class="times"><span id="elapsed">--:--</span> / <span id="total">--:--</span><span class="left" id="left"></span></div>
+    </div>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="meta">
+      <span id="next"></span>
+      <span class="buttons">
+        <button id="sound">Sound</button>
+        <button id="fs">Fullscreen</button>
+      </span>
+    </div>
+  </div>
+</div>
+
+<script src="hls.min.js"></script>
+<script>window.Hls || document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"><\/script>');</script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const CHANNEL = params.get('ch') || '1';
+  // On the Mac the page is served on :8410 next to ErsatzTV on :8409;
+  // on the server, nginx proxies /iptv/ on the same origin.
+  const ETV = location.port === '8410' ? `${location.protocol}//${location.hostname}:8409` : location.origin;
+  const STREAM = `${ETV}/iptv/channel/${CHANNEL}.m3u8?mode=segmenter`;
+  const GUIDE = `${ETV}/iptv/xmltv.xml`;
+
+  const $ = (id) => document.getElementById(id);
+  const video = $('video');
+  let hls = null;
+  let programmes = [];   // [{start, stop, title, year}] in ms since epoch
+  let guideLoadedAt = 0;
+
+  // ---------- guide ----------
+  function parseXmltvDate(s) {
+    const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-])(\d{2})(\d{2})/);
+    if (!m) return NaN;
+    const [, y, mo, d, h, mi, se, sign, oh, om] = m;
+    const offset = (sign === '-' ? -1 : 1) * (Number(oh) * 60 + Number(om)) * 60000;
+    return Date.UTC(y, mo - 1, d, h, mi, se) - offset;
+  }
+
+  async function loadGuide() {
+    try {
+      const text = (await (await fetch(GUIDE, { cache: 'no-store' })).text()).replace(/^﻿/, '');
+      const doc = new DOMParser().parseFromString(text, 'application/xml');
+      // find this channel's id by its number (first display-name is "<number> <name>", one is just "<number>")
+      let channelId = null;
+      for (const ch of doc.querySelectorAll('channel')) {
+        const names = [...ch.querySelectorAll('display-name')].map((n) => n.textContent.trim());
+        if (names.includes(CHANNEL)) { channelId = ch.getAttribute('id'); break; }
+      }
+      programmes = [...doc.querySelectorAll('programme')]
+        .filter((p) => !channelId || p.getAttribute('channel') === channelId)
+        .map((p) => ({
+          start: parseXmltvDate(p.getAttribute('start')),
+          stop: parseXmltvDate(p.getAttribute('stop')),
+          title: p.querySelector('title')?.textContent || 'Unknown',
+          year: p.querySelector('date')?.textContent?.slice(0, 4) || '',
+        }))
+        .sort((a, b) => a.start - b.start);
+      guideLoadedAt = Date.now();
+    } catch (e) {
+      console.warn('guide load failed', e);
+    }
+  }
+
+  // ---------- which moment of the broadcast is on screen ----------
+  // The stream carries EXT-X-PROGRAM-DATE-TIME, so we know the real clock time of the
+  // frame being shown (buffer delay included) — not just "now".
+  function playingTime() {
+    if (hls && hls.playingDate) return hls.playingDate.getTime();
+    if (!hls && video.getStartDate) {
+      const sd = video.getStartDate().getTime();
+      if (!isNaN(sd)) return sd + video.currentTime * 1000;
+    }
+    return null;
+  }
+
+  // ---------- formatting ----------
+  function fmt(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    const mm = String(m).padStart(h ? 2 : 1, '0'), ss = String(sec).padStart(2, '0');
+    return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+  }
+  const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // ---------- UI tick ----------
+  function tick() {
+    $('clock').textContent = hhmm(Date.now());
+    const t = playingTime();
+    if (t === null) return;
+    let i = programmes.findIndex((p) => p.start <= t && t < p.stop);
+    if ((i === -1 || Date.now() - guideLoadedAt > 5 * 60000) && Date.now() - guideLoadedAt > 10000) {
+      loadGuide();   // new item started or guide is stale
+    }
+    if (i === -1) { $('mini-title').textContent = 'Loading guide…'; return; }
+
+    const cur = programmes[i], next = programmes[i + 1];
+    const elapsed = t - cur.start, total = cur.stop - cur.start;
+    $('title').textContent = cur.title;
+    $('year').textContent = cur.year ? `(${cur.year})` : '';
+    $('elapsed').textContent = fmt(elapsed);
+    $('total').textContent = fmt(total);
+    $('left').textContent = `${Math.ceil((total - elapsed) / 60000)} min left`;
+    $('fill').style.width = `${Math.min(100, (elapsed / total) * 100)}%`;
+    $('next').innerHTML = next ? `Next · ${hhmm(next.start)} · <b></b>` : '';
+    if (next) $('next').querySelector('b').textContent = next.title;
+    $('mini-time').textContent = `${fmt(elapsed)} / ${fmt(total)}`;
+    $('mini-title').textContent = cur.title;
+    document.title = `${cur.title} · Movie Channel`;
+  }
+
+  // ---------- player ----------
+  function showStatus(msg) { $('status').textContent = msg; $('status').hidden = !msg; }
+
+  function startPlayer() {
+    showStatus('Tuning in…');
+    if (window.Hls && Hls.isSupported()) {
+      hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 30 });
+      hls.loadSource(STREAM);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { hls.recoverMediaError(); return; }
+        // channel restarting or network blip: reconnect
+        showStatus('Reconnecting…');
+        hls.destroy(); hls = null;
+        setTimeout(startPlayer, 3000);
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = STREAM;   // iPhone / iPad native HLS
+      video.play().catch(() => {});
+    } else {
+      showStatus('This browser cannot play the stream.');
+    }
+  }
+  video.addEventListener('playing', () => showStatus(''));
+
+  // ---------- controls ----------
+  function setMuted(m) {
+    video.muted = m;
+    $('unmute').hidden = !m;
+    $('sound').textContent = m ? 'Sound on' : 'Mute';
+  }
+  $('unmute').onclick = () => { setMuted(false); video.play().catch(() => {}); };
+  $('sound').onclick = () => setMuted(!video.muted);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else (document.documentElement.requestFullscreen || video.webkitEnterFullscreen)?.call(
+      document.documentElement.requestFullscreen ? document.documentElement : video);
+  }
+  $('fs').onclick = toggleFullscreen;
+  video.addEventListener('dblclick', toggleFullscreen);
+
+  // info bar auto-hide
+  let hideTimer;
+  function wake() {
+    $('bar').classList.remove('hidden');
+    document.body.classList.remove('idle');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!video.paused) { $('bar').classList.add('hidden'); document.body.classList.add('idle'); }
+    }, 5000);
+  }
+  ['mousemove', 'touchstart', 'keydown'].forEach((e) => document.addEventListener(e, wake, { passive: true }));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'f') toggleFullscreen();
+    if (e.key === 'm') setMuted(!video.muted);
+    if (e.key === 'i') $('counter').hidden = !$('counter').hidden;
+  });
+
+  setMuted(true);   // browsers only allow autoplay when muted
+  loadGuide().then(startPlayer);
+  setInterval(tick, 500);
+  wake();
+</script>
+</body>
+</html>

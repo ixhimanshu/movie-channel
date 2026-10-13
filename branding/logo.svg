@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1f3b"/>
+      <stop offset="1" stop-color="#0b0d1a"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset="1" stop-color="#f29b2b"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)"/>
+  <!-- TV screen -->
+  <rect x="96" y="132" width="320" height="220" rx="36" fill="none" stroke="url(#gold)" stroke-width="22"/>
+  <!-- antennas -->
+  <line x1="256" y1="132" x2="196" y2="72" stroke="url(#gold)" stroke-width="16" stroke-linecap="round"/>
+  <line x1="256" y1="132" x2="316" y2="72" stroke="url(#gold)" stroke-width="16" stroke-linecap="round"/>
+  <!-- play triangle -->
+  <path d="M226 190 L226 294 L312 242 Z" fill="url(#gold)"/>
+  <!-- stand -->
+  <rect x="176" y="372" width="160" height="18" rx="9" fill="url(#gold)"/>
+  <!-- live dot -->
+  <circle cx="256" cy="430" r="14" fill="#ff3b3b"/>
+</svg>
