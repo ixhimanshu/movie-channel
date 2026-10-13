@@ -34,9 +34,8 @@ How it's built ([deploy/](deploy/)):
 - **fetcher**: downloads the public-domain starter films into `/media/Movies`
   (partials in `/media/incoming`), then idles. Safe to remove from the compose file later.
 - **submitter**: the "add a movie by link" page (`deploy/submitter.py`, served at
-  `/submit/` on the admin domain). Each link is checked by `deploy/license_check.py` first:
-  only Internet Archive items marked public domain / Creative Commons and YouTube (or other
-  yt-dlp sites) videos marked Creative Commons are accepted. Accepted videos download at up
+  `/submit/` on the admin domain). Submitted links download directly without a license
+  check. Videos from Internet Archive or yt-dlp-supported sites download at up
   to 720p into `/media/incoming`, then move to `/media/Movies/<Title>/`. The submission list
   is kept in `/media/.submit/jobs.json`. yt-dlp is reinstalled on every start, so if
   YouTube downloads start failing, restart the service.

@@ -23,7 +23,6 @@ CONF=$(b64 nginx.conf)
 AUTH=$(print -rn -- "$htpasswd_line" | base64 | tr -d '\n')
 FETCH=$(b64 fetch-movies.sh)
 SUBMIT=$(b64 submitter.py)
-LICENSE=$(b64 license_check.py)
 
 cat > docker-compose.yml <<EOF
 services:
@@ -63,9 +62,8 @@ services:
     restart: unless-stopped
     environment:
       SUBMIT_B64: "$SUBMIT"
-      LICENSE_B64: "$LICENSE"
     # yt-dlp is installed fresh on every start so YouTube changes are picked up by a restart
-    command: ["/bin/sh", "-c", "apk add --no-cache ffmpeg nodejs >/dev/null && pip install -q --no-cache-dir --root-user-action=ignore 'yt-dlp[default]' && mkdir -p /app && echo \$\$SUBMIT_B64 | base64 -d > /app/submitter.py && echo \$\$LICENSE_B64 | base64 -d > /app/license_check.py && exec python -u /app/submitter.py"]
+    command: ["/bin/sh", "-c", "apk add --no-cache ffmpeg nodejs >/dev/null && pip install -q --no-cache-dir --root-user-action=ignore 'yt-dlp[default]' && mkdir -p /app && echo \$\$SUBMIT_B64 | base64 -d > /app/submitter.py && exec python -u /app/submitter.py"]
     volumes:
       - media:/media
       - etv-config:/etv:ro

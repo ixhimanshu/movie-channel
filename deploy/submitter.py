@@ -1,7 +1,7 @@
 """Paste-a-link movie downloader for the Movie Channel ("submitter" service on Easypanel).
 
-Serves a page at /submit/ (nginx puts it behind the admin password). Every link goes
-through license_check first; allowed videos download into /media/incoming and move to
+Serves a page at /submit/ (nginx puts it behind the admin password). Submitted videos
+download directly into /media/incoming and move to
 /media/Movies/<Title>/<Title>.<ext> only when complete, so ErsatzTV never sees a partial
 file. Jobs are kept in /media/.submit/jobs.json so the list survives restarts.
 
@@ -23,8 +23,6 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote, urlparse
 
-import license_check
-
 MEDIA = os.environ.get("MEDIA", "/media")
 MOVIES = os.path.join(MEDIA, "Movies")
 INCOMING = os.path.join(MEDIA, "incoming")
@@ -34,7 +32,7 @@ ETV_CONFIG = os.environ.get("ETV_CONFIG", "/etv")
 LIBRARY = os.environ.get("ETV_LIBRARY_ID", "1")
 MIN_FREE = 5 * 1024**3  # keep room on the disk for the server's other projects
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".ogv", ".mpg", ".mpeg")
-ACTIVE = ("queued", "checking", "downloading")
+ACTIVE = ("queued", "checking", "downloading")  # resume legacy checking jobs too
 
 jobs = {}
 lock = threading.Lock()
@@ -89,13 +87,10 @@ def worker():
 
 
 def process(job):
-    update(job, status="checking", reason="checking the license...")
-    allowed, why = license_check.check(job["url"])
-    if not allowed:
-        return update(job, status="rejected", reason=why)
     if shutil.disk_usage(MEDIA).free < MIN_FREE:
         return update(job, status="failed", reason="the server's disk is almost full")
 
+    update(job, status="downloading", reason="starting download...", progress=0)
     tmp = os.path.join(INCOMING, job["id"])
     os.makedirs(tmp, exist_ok=True)
     prepare = prepare_archive if is_archive(job["url"]) else prepare_ytdlp
@@ -106,7 +101,7 @@ def process(job):
         shutil.rmtree(tmp, ignore_errors=True)
         return update(job, status="rejected", title=title, reason=f"'{title}' is already in the library")
 
-    update(job, status="downloading", title=title, reason=why, progress=0)
+    update(job, status="downloading", title=title, reason="downloading...", progress=0)
     src = fetch()
     ext = os.path.splitext(src)[1].lower()
     # assemble the folder in incoming, then rename it into Movies in one step
@@ -365,8 +360,7 @@ PAGE = r"""<!doctype html>
 <body>
 <main>
   <h1>Add a movie to the channel</h1>
-  <p class="lead">Paste a link to a single video. Only public-domain or Creative Commons videos are accepted
-    (Internet Archive items marked public domain / CC, or YouTube videos marked Creative Commons).
+  <p class="lead">Paste a link to a single video to download it directly.
     New movies join the channel after the next library scan.</p>
   <form id="f">
     <label>Video link
