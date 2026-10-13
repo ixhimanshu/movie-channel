@@ -23,7 +23,7 @@ class MovieManagementTests(unittest.TestCase):
             p = patch.object(submitter, name, value)
             p.start()
             self.addCleanup(p.stop)
-        self.scan = patch.object(submitter, "rescan").start()
+        self.scan = patch.object(submitter.channel_sync, "request").start()
         self.addCleanup(patch.stopall)
 
     def movie(self, name="Example"):
@@ -49,12 +49,29 @@ class MovieManagementTests(unittest.TestCase):
         self.assertFalse(selected.exists())
         self.assertTrue(kept.exists())
         self.assertEqual(submitter.jobs["job"]["status"], "deleted")
+        self.scan.assert_called_once_with()
 
     def test_delete_flat_video(self):
         file = self.movies / "Flat.mp4"
         file.write_bytes(b"video")
         submitter.delete_movie(file.name)
         self.assertFalse(file.exists())
+
+    def test_completed_download_requests_reshuffle(self):
+        job = {'id': 'new', 'url': 'https://example.com/video', 'status': 'queued', 'requested_title': ''}
+        submitter.jobs['new'] = job
+        def prepare(job, tmp):
+            def fetch():
+                file = Path(tmp) / 'video.mp4'
+                file.write_bytes(b'video')
+                return str(file)
+            return 'New Movie', fetch
+        with patch.object(submitter, 'MEDIA', str(self.root)), patch.object(submitter, 'INCOMING', str(self.root / 'incoming')), \
+                patch.object(submitter, 'MIN_FREE', 0), patch.object(submitter, 'prepare_ytdlp', side_effect=prepare):
+            submitter.process(job)
+        self.assertEqual(job['status'], 'done')
+        self.assertTrue((self.movies / 'New Movie/New Movie.mp4').exists())
+        self.scan.assert_called_once_with()
 
     def test_reject_paths_and_symlinks(self):
         outside = self.root / "outside"
@@ -89,8 +106,8 @@ class MovieManagementTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         base = f"http://127.0.0.1:{server.server_port}"
-        def post(body, content_type="application/json"):
-            request = urllib.request.Request(base + "/submit/api/movies/delete", data=json.dumps(body).encode(),
+        def post(body, content_type="application/json", path="/submit/api/movies/delete"):
+            request = urllib.request.Request(base + path, data=json.dumps(body).encode(),
                                              headers={"Content-Type": content_type})
             try:
                 with urllib.request.urlopen(request) as response:
@@ -102,12 +119,15 @@ class MovieManagementTests(unittest.TestCase):
         self.assertEqual(post({"id": "Example", "confirm": True}, "text/plain"), 415)
         self.assertEqual(post([]), 400)
         self.assertTrue(folder.exists())
-        for path in ("/submit/", "/submit/movies/", "/submit/api/movies"):
+        for path in ("/submit/", "/submit/movies/", "/submit/api/movies", "/submit/api/channel"):
             with urllib.request.urlopen(base + path) as response:
                 self.assertEqual(response.status, 200)
         self.assertEqual(post({"id": "Example", "confirm": True}), 200)
         self.assertFalse(folder.exists())
         self.assertEqual(post({"id": "Example", "confirm": True}), 404)
+        self.scan.reset_mock()
+        self.assertEqual(post({}, path="/submit/api/channel/reshuffle"), 202)
+        self.scan.assert_called_once_with()
 
 
 if __name__ == "__main__":

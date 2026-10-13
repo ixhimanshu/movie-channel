@@ -22,6 +22,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote, urlparse
+from channel_sync import ChannelSync
 
 MEDIA = os.environ.get("MEDIA", "/media")
 MOVIES = os.path.join(MEDIA, "Movies")
@@ -30,6 +31,9 @@ STATE = os.path.join(MEDIA, ".submit", "jobs.json")
 ETV = os.environ.get("ETV_URL", "http://ersatztv:8409")
 ETV_CONFIG = os.environ.get("ETV_CONFIG", "/etv")
 LIBRARY = os.environ.get("ETV_LIBRARY_ID", "1")
+CHANNEL = os.environ.get("ETV_CHANNEL_NUMBER", "1")
+channel_sync = ChannelSync(ETV, ETV_CONFIG, LIBRARY, CHANNEL,
+                           os.path.join(MEDIA, ".submit", "channel-sync.json"))
 MIN_FREE = 5 * 1024**3  # keep room on the disk for the server's other projects
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".ogv", ".mpg", ".mpeg")
 ACTIVE = ("queued", "checking", "downloading")  # resume legacy checking jobs too
@@ -112,8 +116,8 @@ def process(job):
     os.rename(staged, dest)
     shutil.rmtree(tmp, ignore_errors=True)
     update(job, status="done", progress=None,
-           reason=f"added as Movies/{title}/{title}{ext}; it joins the channel after the next library scan")
-    rescan()
+           reason=f"added as Movies/{title}/{title}{ext}; the channel is being scanned and reshuffled")
+    channel_sync.request()
 
 
 def is_archive(url):
@@ -243,22 +247,6 @@ def prepare_ytdlp(job, tmp):
     return title, fetch
 
 
-def rescan():
-    # ErsatzTV also scans every hour by itself, so this only makes new movies show up sooner
-    try:
-        headers = {}
-        for p in [os.path.join(ETV_CONFIG, "api-secrets.json"), *glob.glob(os.path.join(ETV_CONFIG, "*", "api-secrets.json"))]:
-            if os.path.exists(p):
-                with open(p) as f:
-                    headers["X-Etv-Api-Key"] = json.load(f)["ApiKey"]
-                break
-        req = urllib.request.Request(f"{ETV}/api/libraries/{LIBRARY}/scan", method="POST", headers=headers)
-        urllib.request.urlopen(req, timeout=30).close()
-        print("asked ErsatzTV to scan the library", flush=True)
-    except Exception as e:
-        print(f"library scan request failed ({e}); the hourly scan will pick it up", flush=True)
-
-
 # ---- web ----
 
 def movie_files(path):
@@ -309,7 +297,7 @@ def delete_movie(name):
             if job.get("status") == "done" and job.get("title") == name:
                 job.update(status="deleted", reason="deleted from the server", progress=None)
         save()
-    threading.Thread(target=rescan, daemon=True).start()
+    channel_sync.request()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -325,6 +313,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, MOVIES_PAGE.encode(), "text/html; charset=utf-8")
         if self.path == "/submit/api/movies":
             return self.reply(200, json.dumps(list_movies()).encode(), "application/json")
+        if self.path == "/submit/api/channel":
+            return self.reply(200, json.dumps(channel_sync.snapshot()).encode(), "application/json")
         if self.path == "/submit/api/jobs":
             with lock:
                 listed = sorted(jobs.values(), key=lambda j: j["created"], reverse=True)[:100]
@@ -333,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(404, b"not found", "text/plain")
 
     def do_POST(self):
-        if self.path not in ("/submit/api/jobs", "/submit/api/movies/delete"):
+        if self.path not in ("/submit/api/jobs", "/submit/api/movies/delete", "/submit/api/channel/reshuffle"):
             return self.reply(404, b"not found", "text/plain")
         # JSON only: a plain cross-site form can't send it, so a remembered admin login can't be abused
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -344,6 +334,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(400, "invalid JSON")
         if not isinstance(body, dict):
             return self.error(400, "send a JSON object")
+        if self.path == "/submit/api/channel/reshuffle":
+            channel_sync.request()
+            return self.reply(202, json.dumps(channel_sync.snapshot()).encode(), "application/json")
         if self.path == "/submit/api/movies/delete":
             if body.get("confirm") is not True:
                 return self.error(400, "confirm deletion first")
@@ -356,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 traceback.print_exc()
                 return self.error(500, "could not delete the movie; refresh the list and try again")
-            return self.reply(200, json.dumps({"message": "Movie deleted from the server. Library scan requested; the guide updates when the schedule refreshes."}).encode(), "application/json")
+            return self.reply(200, json.dumps({"message": "Movie deleted from the server. The channel is being scanned, reshuffled, and restarted."}).encode(), "application/json")
         url = str(body.get("url") or "").strip()
         title = clean_title(str(body.get("title") or ""))
         if not re.match(r"https?://\S+$", url):
@@ -432,7 +425,7 @@ PAGE = r"""<!doctype html>
   <p><a href="/submit/movies/" style="color: var(--accent)">Manage Movies — view and delete server movies</a></p>
   <h1>Add a movie to the channel</h1>
   <p class="lead">Paste a link to a single video to download it directly.
-    New movies join the channel after the next library scan.</p>
+    Completed downloads automatically refresh and reshuffle the channel.</p>
   <form id="f">
     <label>Video link
       <input id="url" type="url" required placeholder="https://archive.org/details/... or https://www.youtube.com/watch?v=...">
@@ -530,9 +523,12 @@ MOVIES_PAGE = r"""<!doctype html>
 <a href="/submit/">← Add a movie</a>
 <h1>Manage Movies</h1>
 <p class="lead">Movies stored on the server. Downloads appear here when complete.
-Deleting a movie removes its folder and files permanently.</p>
+Deleting a movie removes its folder and files permanently.
+Adding or deleting a movie automatically reshuffles and restarts the channel.</p>
 <div class="tools"><input id="search" type="search" placeholder="Search movies" aria-label="Search movies">
 <button id="refresh" type="button">Refresh</button><span id="count"></span></div>
+<p><button id="reshuffle" type="button">Reshuffle channel</button></p>
+<p id="channel" role="status" aria-live="polite"></p>
 <p id="message" role="status" aria-live="polite"></p>
 <div id="movies">Loading movies...</div>
 </main><script>
@@ -585,13 +581,35 @@ async function removeMovie(movie) {
 }
 $('search').addEventListener('input', render);
 $('refresh').addEventListener('click', refresh);
+async function refreshChannel() {
+  try {
+    const response = await fetch('/submit/api/channel', {cache: 'no-store'});
+    if (!response.ok) throw new Error('Could not load channel status.');
+    const state = await response.json();
+    $('channel').textContent = state.reason;
+    $('reshuffle').disabled = state.status === 'queued' || state.status === 'syncing';
+  } catch (error) { $('channel').textContent = error.message; }
+}
+$('reshuffle').addEventListener('click', async () => {
+  if (!confirm('Reshuffle the channel from the available movies and restart playback? Missing-file library records will be cleared.')) return;
+  $('reshuffle').disabled = true;
+  try {
+    const response = await fetch('/submit/api/channel/reshuffle', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: '{}'});
+    if (!response.ok) throw new Error('Could not request reshuffle.');
+    await refreshChannel();
+  } catch (error) { $('channel').textContent = error.message; $('reshuffle').disabled = false; }
+});
 refresh();
+refreshChannel();
+setInterval(() => { if (!document.hidden) refreshChannel(); }, 2000);
 </script></body></html>
 """
 
 
 if __name__ == "__main__":
     load()
+    channel_sync.start()
     threading.Thread(target=worker, daemon=True).start()
     port = int(os.environ.get("PORT", "8000"))
     print(f"submitter listening on :{port}", flush=True)

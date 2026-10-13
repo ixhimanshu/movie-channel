@@ -21,8 +21,8 @@ b64() { base64 -i "$1" | tr -d '\n'; }
 PAGE=$(b64 ../web/index.html)
 CONF=$(b64 nginx.conf)
 AUTH=$(print -rn -- "$htpasswd_line" | base64 | tr -d '\n')
-FETCH=$(b64 fetch-movies.sh)
 SUBMIT=$(b64 submitter.py)
+SYNC=$(b64 channel_sync.py)
 
 cat > docker-compose.yml <<EOF
 services:
@@ -48,22 +48,14 @@ services:
       AUTH_B64: "$AUTH"
     command: ["/bin/sh", "-c", "echo \$\$PAGE_B64 | base64 -d > /usr/share/nginx/html/index.html && echo \$\$CONF_B64 | base64 -d > /etc/nginx/conf.d/default.conf && echo \$\$AUTH_B64 | base64 -d > /etc/nginx/admin.htpasswd && exec nginx -g 'daemon off;'"]
 
-  fetcher:
-    image: alpine:3.20
-    restart: unless-stopped
-    environment:
-      FETCH_B64: "$FETCH"
-    command: ["/bin/sh", "-c", "echo \$\$FETCH_B64 | base64 -d > /fetch.sh && exec sh /fetch.sh"]
-    volumes:
-      - media:/media
-
   submitter:
     image: python:3.12-alpine
     restart: unless-stopped
     environment:
       SUBMIT_B64: "$SUBMIT"
+      SYNC_B64: "$SYNC"
     # yt-dlp is installed fresh on every start so YouTube changes are picked up by a restart
-    command: ["/bin/sh", "-c", "apk add --no-cache ffmpeg nodejs >/dev/null && pip install -q --no-cache-dir --root-user-action=ignore 'yt-dlp[default]' && mkdir -p /app && echo \$\$SUBMIT_B64 | base64 -d > /app/submitter.py && exec python -u /app/submitter.py"]
+    command: ["/bin/sh", "-c", "apk add --no-cache ffmpeg nodejs >/dev/null && pip install -q --no-cache-dir --root-user-action=ignore 'yt-dlp[default]' && mkdir -p /app && echo \$\$SUBMIT_B64 | base64 -d > /app/submitter.py && echo \$\$SYNC_B64 | base64 -d > /app/channel_sync.py && exec python -u /app/submitter.py"]
     volumes:
       - media:/media
       - etv-config:/etv:ro
